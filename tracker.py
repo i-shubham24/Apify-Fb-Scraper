@@ -23,12 +23,15 @@ def send_telegram_alert(text: str, listing_id: str, listing_url: str):
             ]
         }
     }
-    requests.post(url, json=payload)
+    response = requests.post(url, json=payload)
+    print(f"Telegram API Response: {response.status_code} - {response.text}")
 
 def process_scraped_data(items: list):
+    print(f"Processing {len(items)} items received from Apify.")
     for item in items:
         # Safety check: skip if the item is not a valid dictionary object
         if not isinstance(item, dict):
+            print(f"Skipping non-dict item type: {type(item)}")
             continue
 
         listing_id = str(item.get("id", item.get("postId", "")))
@@ -45,15 +48,20 @@ def process_scraped_data(items: list):
         except (ValueError, TypeError):
             continue
 
-        # 1. Query Supabase to see if the listing exists
+        # Query Supabase to see if the listing exists
         response = supabase.table("listings").select("price, status").eq("id", listing_id).execute()
         
         if len(response.data) == 0:
-            # Analyze with Gemini first to skip scams
+            # Analyze with Gemini to filter out scams
             analysis_json = analyze_listing(title, description)
-            analysis = json.loads(analysis_json)
+            try:
+                analysis = json.loads(analysis_json)
+            except Exception as e:
+                print(f"JSON parse error from Gemini: {e}")
+                analysis = {"is_scam": False, "battery_health": "N/A", "storage": "N/A", "condition_notes": "Analyzed"}
             
             if analysis.get("is_scam"):
+                print(f"Filtered out potential scam: {title}")
                 continue
             
             # Insert new listing into Supabase
@@ -65,10 +73,11 @@ def process_scraped_data(items: list):
                 "status": "NEW"
             }).execute()
 
+            print(f"New unique listing saved & alerting Telegram: {title}")
             alert = (
                 f"🆕 <b>New Listing Alert!</b>\n\n"
                 f"📱 <b>{title}</b>\n"
-                f"💰 <b>${price:,.2f}</b>\n\n"
+                f"💰 <b>₹{price:,.2f}</b>\n\n"
                 f"🤖 <b>Gemini Analysis:</b>\n"
                 f"🔋 Battery: {analysis.get('battery_health')}\n"
                 f"💾 Storage: {analysis.get('storage')}\n"
@@ -92,11 +101,12 @@ def process_scraped_data(items: list):
                     "new_price": price
                 }).execute()
                 
+                print(f"Price drop detected for {title}")
                 alert = (
                     f"📉 <b>Price Drop Alert! (-{discount:.1f}%)</b>\n\n"
                     f"📱 {title}\n"
-                    f"🏷️ Old Price: <s>${old_price:,.2f}</s>\n"
-                    f"🔥 New Price: <b>${price:,.2f}</b>\n"
+                    f"🏷️ Old Price: <s>₹{old_price:,.2f}</s>\n"
+                    f"🔥 New Price: <b>₹{price:,.2f}</b>\n"
                     f"📊 Status: {current_status}"
                 )
                 send_telegram_alert(alert, listing_id, listing_url)
