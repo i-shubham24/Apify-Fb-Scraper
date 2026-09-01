@@ -14,8 +14,11 @@ app = FastAPI()
 async def health_check():
     return {"status": "Bot is awake and running!"}
 
-@app.post("/webhook/apify")
+@app.api_route("/webhook/apify", methods=["GET", "POST"])
 async def apify_webhook(request: Request):
+    if request.method == "GET":
+        return {"status": "Apify webhook endpoint is active"}
+        
     payload = await request.json()
     dataset_id = payload.get("resource", {}).get("defaultDatasetId")
     
@@ -33,11 +36,10 @@ async def telegram_webhook(request: Request):
     if "callback_query" in data:
         callback = data["callback_query"]
         callback_id = callback["id"]
-        callback_data = callback["data"]  # e.g., "status:CONTACTED:12345"
+        callback_data = callback["data"]
 
         _, new_status, listing_id = callback_data.split(":")
 
-        # Update status in Supabase
         supabase.table("listings").update({"status": new_status}).eq("id", listing_id).execute()
 
         ack_url = f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery"
