@@ -20,12 +20,23 @@ async def apify_webhook(request: Request):
         return {"status": "Apify webhook endpoint is active"}
         
     payload = await request.json()
+    print(f"Webhook payload received: {payload}")
+    
     dataset_id = payload.get("resource", {}).get("defaultDatasetId")
     
     if dataset_id:
         dataset_url = f"https://api.apify.com/v2/datasets/{dataset_id}/items?clean=true"
-        items = requests.get(dataset_url).json()
-        process_scraped_data(items)
+        response = requests.get(dataset_url)
+        print(f"Apify Dataset Status: {response.status_code}")
+        
+        try:
+            items = response.json()
+            if isinstance(items, list):
+                process_scraped_data(items)
+            else:
+                print(f"Apify returned a non-list response: {items}")
+        except Exception as e:
+            print(f"Failed to parse dataset JSON: {e}")
         
     return {"status": "ok"}
 
