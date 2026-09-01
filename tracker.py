@@ -1,8 +1,8 @@
-import sqlite3
 import requests
 import os
 import json
 from dotenv import load_dotenv
+from database import supabase
 from gemini_analyzer import analyze_listing
 
 load_dotenv()
@@ -26,10 +26,11 @@ def send_telegram_alert(text: str, listing_id: str, listing_url: str):
     requests.post(url, json=payload)
 
 def process_scraped_data(items: list):
-    conn = sqlite3.connect("marketplace.db")
-    cursor = conn.cursor()
-
     for item in items:
+        # Safety check: skip if the item is not a valid dictionary object
+        if not isinstance(item, dict):
+            continue
+
         listing_id = str(item.get("id", item.get("postId", "")))
         title = item.get("title", "No Title")
         raw_price = item.get("price")
@@ -39,25 +40,30 @@ def process_scraped_data(items: list):
         if not raw_price or not listing_id:
             continue
 
-        price = float(raw_price)
+        try:
+            price = float(raw_price)
+        except (ValueError, TypeError):
+            continue
 
-        cursor.execute("SELECT price, status FROM listings WHERE id = ?", (listing_id,))
-        row = cursor.fetchone()
-
-        if row is None:
-            # 1. NEW LISTING
-            cursor.execute(
-                "INSERT INTO listings (id, title, price, url) VALUES (?, ?, ?, ?)",
-                (listing_id, title, price, listing_url)
-            )
-            
-            # Analyze with Gemini
+        # 1. Query Supabase to see if the listing exists
+        response = supabase.table("listings").select("price, status").eq("id", listing_id).execute()
+        
+        if len(response.data) == 0:
+            # Analyze with Gemini first to skip scams
             analysis_json = analyze_listing(title, description)
             analysis = json.loads(analysis_json)
             
-            # Skip scams
             if analysis.get("is_scam"):
                 continue
+            
+            # Insert new listing into Supabase
+            supabase.table("listings").insert({
+                "id": listing_id,
+                "title": title,
+                "price": price,
+                "url": listing_url,
+                "status": "NEW"
+            }).execute()
 
             alert = (
                 f"🆕 <b>New Listing Alert!</b>\n\n"
@@ -71,11 +77,20 @@ def process_scraped_data(items: list):
             send_telegram_alert(alert, listing_id, listing_url)
 
         else:
-            old_price, current_status = row
+            existing_data = response.data[0]
+            old_price = float(existing_data["price"])
+            current_status = existing_data["status"]
+            
             if price < old_price:
-                # 2. PRICE DROP
                 discount = ((old_price - price) / old_price) * 100
-                cursor.execute("UPDATE listings SET price = ? WHERE id = ?", (price, listing_id))
+                
+                supabase.table("listings").update({"price": price}).eq("id", listing_id).execute()
+                
+                supabase.table("price_history").insert({
+                    "listing_id": listing_id,
+                    "old_price": old_price,
+                    "new_price": price
+                }).execute()
                 
                 alert = (
                     f"📉 <b>Price Drop Alert! (-{discount:.1f}%)</b>\n\n"
@@ -85,6 +100,3 @@ def process_scraped_data(items: list):
                     f"📊 Status: {current_status}"
                 )
                 send_telegram_alert(alert, listing_id, listing_url)
-
-    conn.commit()
-    conn.close()
