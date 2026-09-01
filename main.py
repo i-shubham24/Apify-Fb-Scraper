@@ -1,7 +1,6 @@
 from fastapi import FastAPI, Request
+from database import supabase
 from tracker import process_scraped_data
-from database import init_db
-import sqlite3
 import requests
 import os
 from dotenv import load_dotenv
@@ -11,9 +10,9 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 app = FastAPI()
 
-@app.on_event("startup")
-def startup_event():
-    init_db()
+@app.get("/")
+async def health_check():
+    return {"status": "Bot is awake and running!"}
 
 @app.post("/webhook/apify")
 async def apify_webhook(request: Request):
@@ -21,7 +20,6 @@ async def apify_webhook(request: Request):
     dataset_id = payload.get("resource", {}).get("defaultDatasetId")
     
     if dataset_id:
-        # Fetch the actual items from Apify
         dataset_url = f"https://api.apify.com/v2/datasets/{dataset_id}/items?clean=true"
         items = requests.get(dataset_url).json()
         process_scraped_data(items)
@@ -39,13 +37,9 @@ async def telegram_webhook(request: Request):
 
         _, new_status, listing_id = callback_data.split(":")
 
-        conn = sqlite3.connect("marketplace.db")
-        cursor = conn.cursor()
-        cursor.execute("UPDATE listings SET status = ? WHERE id = ?", (new_status, listing_id))
-        conn.commit()
-        conn.close()
+        # Update status in Supabase
+        supabase.table("listings").update({"status": new_status}).eq("id", listing_id).execute()
 
-        # Acknowledge in Telegram UI
         ack_url = f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery"
         requests.post(ack_url, json={"callback_query_id": callback_id, "text": f"Status updated to {new_status}"})
 
