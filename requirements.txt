@@ -3,3 +3,5 @@ uvicorn
 requests
 google-genai
 pydantic
+python-dotenv
+supabase
