@@ -28,7 +28,6 @@ async def apify_webhook(request: Request):
     if dataset_id:
         dataset_url = f"https://api.apify.com/v2/datasets/{dataset_id}/items?clean=true"
         
-        # Apply the token to the request headers to fix the 403 Permission Error
         headers = {}
         if APIFY_API_TOKEN:
             headers["Authorization"] = f"Bearer {APIFY_API_TOKEN}"
