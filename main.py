@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
 
 app = FastAPI()
 
@@ -26,12 +27,21 @@ async def apify_webhook(request: Request):
     
     if dataset_id:
         dataset_url = f"https://api.apify.com/v2/datasets/{dataset_id}/items?clean=true"
-        response = requests.get(dataset_url)
+        
+        # Apply the token to the request headers to fix the 403 Permission Error
+        headers = {}
+        if APIFY_API_TOKEN:
+            headers["Authorization"] = f"Bearer {APIFY_API_TOKEN}"
+        else:
+            print("WARNING: APIFY_API_TOKEN is not set in environment variables.")
+            
+        response = requests.get(dataset_url, headers=headers)
         print(f"Apify Dataset Status: {response.status_code}")
         
         try:
             items = response.json()
             if isinstance(items, list):
+                print(f"Processing {len(items)} items received from Apify.")
                 process_scraped_data(items)
             else:
                 print(f"Apify returned a non-list response: {items}")
