@@ -18,7 +18,6 @@ def analyze_listing(title: str, description: str, listing_price: float) -> str:
     2. is_broken: Set to true if screen/body is cracked or hardware is defective.
     3. is_target_brand: Set to true ONLY for Apple iPhone or Samsung Galaxy.
     4. estimated_market_value: Estimate the average used market price in CAD for this specific model and storage configuration in Canada (numeric value only).
-    5. deal_score: Rate the deal from 1 to 10 based on how much lower the listed price is compared to the estimated market value (10 = massive steal/underpriced, 1 = overpriced).
     
     Return a valid JSON object matching this exact schema:
     {{
@@ -28,7 +27,6 @@ def analyze_listing(title: str, description: str, listing_price: float) -> str:
         "battery_health": "string (e.g., '85%' or 'Unknown')",
         "storage": "string (e.g., '128GB' or 'Unknown')",
         "estimated_market_value": number,
-        "deal_score": integer,
         "condition_notes": "string"
     }}
     
@@ -42,4 +40,4 @@ def analyze_listing(title: str, description: str, listing_price: float) -> str:
         return response.text
     except Exception as e:
         print(f"Gemini generation error: {e}")
-        return '{"is_scam": false, "is_broken": false, "is_target_brand": true, "battery_health": "N/A", "storage": "N/A", "estimated_market_value": 0, "deal_score": 5, "condition_notes": "API Error"}'
+        return '{"is_scam": false, "is_broken": false, "is_target_brand": true, "battery_health": "N/A", "storage": "N/A", "estimated_market_value": ' + str(listing_price) + ', "condition_notes": "API Error"}'

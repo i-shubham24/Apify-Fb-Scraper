@@ -23,7 +23,7 @@ def send_telegram_alert(text: str, listing_id: str, listing_url: str, image_url:
         ]
     }
 
-    # Use sendPhoto if a valid image preview exists, otherwise fallback to sendMessage
+    success = False
     if image_url and image_url.startswith("http"):
         url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
         payload = {
@@ -33,7 +33,11 @@ def send_telegram_alert(text: str, listing_id: str, listing_url: str, image_url:
             "parse_mode": "HTML",
             "reply_markup": keyboard
         }
-    else:
+        res = requests.post(url, json=payload)
+        if res.status_code == 200:
+            success = True
+
+    if not success:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         payload = {
             "chat_id": CHAT_ID,
@@ -41,9 +45,7 @@ def send_telegram_alert(text: str, listing_id: str, listing_url: str, image_url:
             "parse_mode": "HTML",
             "reply_markup": keyboard
         }
-        
-    response = requests.post(url, json=payload)
-    print(f"Telegram API Response: {response.status_code}")
+        requests.post(url, json=payload)
 
 def process_scraped_data(items: list):
     print(f"Processing {len(items)} items in the background...")
@@ -58,7 +60,6 @@ def process_scraped_data(items: list):
             listing_url = item.get("url") or f"https://www.facebook.com/marketplace/item/{listing_id}"
             description = item.get("description", "")
             
-            # Extract image thumbnail URL from various possible Apify schemas
             image_url = (
                 item.get("image") or 
                 item.get("thumbnailUrl") or 
@@ -84,7 +85,7 @@ def process_scraped_data(items: list):
             if price == 0.0:
                 continue
 
-            response = supabase.table("listings").select("price, status, title").eq("id", listing_id).execute()
+            response = supabase.table("listings").select("price, status").eq("id", listing_id).execute()
             
             if len(response.data) == 0:
                 print(f"Sending to Gemini for analysis: {title}")
@@ -103,16 +104,22 @@ def process_scraped_data(items: list):
                         "battery_health": "N/A", 
                         "storage": "N/A", 
                         "estimated_market_value": price,
-                        "deal_score": 5,
-                        "condition_notes": "API Error / Manual review needed."
+                        "condition_notes": "API Error"
                     }
                 
                 if analysis.get("is_scam") or analysis.get("is_broken") or not analysis.get("is_target_brand"):
                     print(f"Filtered out listing: {title}")
                     continue
                 
-                market_val = analysis.get("estimated_market_value", price)
-                deal_score = analysis.get("deal_score", 5)
+                market_val = float(analysis.get("estimated_market_value", price))
+                if market_val <= 0:
+                    market_val = price
+
+                if price >= market_val:
+                    deal_score = 5
+                else:
+                    discount_pct = ((market_val - price) / market_val) * 100
+                    deal_score = min(10, max(6, int(5 + (discount_pct / 10))))
 
                 supabase.table("listings").insert({
                     "id": listing_id,
@@ -122,7 +129,7 @@ def process_scraped_data(items: list):
                     "status": "NEW"
                 }).execute()
 
-                print(f"New deal saved & alerting Telegram: {title}")
+                print(f"New deal saved & alerting Telegram: {title} (Score: {deal_score})")
                 alert = (
                     f"🔥 <b>New Deal Alert! (Score: {deal_score}/10)</b>\n\n"
                     f"📱 <b>{title}</b>\n"

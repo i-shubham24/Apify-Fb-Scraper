@@ -42,7 +42,6 @@ async def apify_webhook(request: Request, background_tasks: BackgroundTasks):
 async def telegram_webhook(request: Request):
     data = await request.json()
 
-    # Handle inline button clicks (Callback Queries)
     if "callback_query" in data:
         callback = data["callback_query"]
         callback_id = callback["id"]
@@ -56,29 +55,29 @@ async def telegram_webhook(request: Request):
                 requests.post(f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery", json={"callback_query_id": callback_id})
                 return {"status": "ok"}
 
-            # Handle Automated Seller Message Generator
             if callback_data.startswith("offer:"):
                 _, listing_id = callback_data.split(":")
                 res = supabase.table("listings").select("title, price").eq("id", listing_id).execute()
                 if res.data:
                     item = res.data[0]
-                    offer_text = f"Hi! Is this {item['title']} still available? Can you do ${float(item['price'])-20:,.0f} cash pickup today?"
+                    offer_text = f"Hi! Is this {item['title']} still available? Can you do ${float(item['price'])-20:,.0f} CAD cash pickup today?"
                 else:
-                    offer_text = "Hi! Is this still available? Can you do cash pickup today?"
+                    offer_text = f"Hi! Is this still available? Can you do cash pickup today?"
 
                 requests.post(f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery", json={
                     "callback_query_id": callback_id, 
-                    "text": "Offer template generated!"
+                    "text": "Offer generated as a reply below!"
                 })
-                # Send the copy-pasteable offer text back to the chat
+                
+                # Send as a direct reply to the deal message ID
                 requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={
                     "chat_id": chat_id,
-                    "text": f"📋 <b>Quick Offer Template (Tap to copy):</b>\n\n<code>{offer_text}</code>",
+                    "reply_to_message_id": message_id,
+                    "text": f"📋 <b>Quick Offer Template:</b>\n\n<code>{offer_text}</code>",
                     "parse_mode": "HTML"
                 })
                 return {"status": "ok"}
 
-            # Handle Status Updates (Contacted / Purchased)
             _, new_status, listing_id = callback_data.split(":")
             supabase.table("listings").update({"status": new_status}).eq("id", listing_id).execute()
 
@@ -87,7 +86,6 @@ async def telegram_webhook(request: Request):
                 "text": f"Status updated to {new_status}!"
             })
 
-            # Rebuild keyboard without action buttons, locking the current status
             updated_keyboard = {
                 "inline_keyboard": [
                     [{"text": f"✅ Status: {new_status}", "callback_data": "none"}]
@@ -102,7 +100,6 @@ async def telegram_webhook(request: Request):
         except Exception as e:
             print(f"Error handling callback query: {e}")
 
-    # Handle Interactive Telegram Commands sent in chat text
     elif "message" in data:
         message = data["message"]
         chat_id = message.get("chat", {}).get("id")
@@ -116,31 +113,60 @@ async def telegram_webhook(request: Request):
 
                 reply = (
                     f"📊 <b>Market Bot Statistics</b>\n\n"
-                    f"📱 Total Tracked Listings: {total}\n"
-                    f"💬 Contacted Sellers: {contacted}\n"
-                    f"✅ Successfully Purchased: {purchased}"
+                    f"📱 Total Tracked: {total}\n"
+                    f"💬 Contacted: {contacted}\n"
+                    f"✅ Purchased: {purchased}"
                 )
             except Exception as e:
                 reply = f"Could not retrieve stats: {e}"
 
             requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={
-                "chat_id": chat_id,
-                "text": reply,
-                "parse_mode": "HTML"
+                "chat_id": chat_id, "text": reply, "parse_mode": "HTML"
+            })
+
+        elif text.startswith("/deals"):
+            try:
+                res = supabase.table("listings").select("title, price, url").order("id", desc=True).limit(5).execute()
+                if res.data:
+                    reply = "🔥 <b>Latest Tracked Deals:</b>\n\n"
+                    for item in res.data:
+                        reply += f"• <a href='{item['url']}'>{item['title']}</a> - <b>${float(item['price']):,.2f} CAD</b>\n"
+                else:
+                    reply = "No deals found in database yet."
+            except Exception as e:
+                reply = f"Error fetching deals: {e}"
+
+            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={
+                "chat_id": chat_id, "text": reply, "parse_mode": "HTML", "disable_web_page_preview": True
+            })
+
+        elif text.startswith("/contacted"):
+            try:
+                res = supabase.table("listings").select("title, price, url").eq("status", "CONTACTED").limit(5).execute()
+                if res.data:
+                    reply = "💬 <b>Deals You Contacted:</b>\n\n"
+                    for item in res.data:
+                        reply += f"• <a href='{item['url']}'>{item['title']}</a> - <b>${float(item['price']):,.2f} CAD</b>\n"
+                else:
+                    reply = "No contacted deals recorded yet."
+            except Exception as e:
+                reply = f"Error fetching contacted items: {e}"
+
+            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={
+                "chat_id": chat_id, "text": reply, "parse_mode": "HTML", "disable_web_page_preview": True
             })
 
         elif text.startswith("/help") or text.startswith("/start"):
             help_text = (
                 f"🤖 <b>Canadian Marketplace Deal Bot</b>\n\n"
-                f"Commands:\n"
-                f"• /stats - View database pipeline statistics\n"
-                f"• /help - Show this help menu\n\n"
-                f"Deal alerts arrive automatically with AI Deal Scores and thumbnail previews!"
+                f"<b>Commands:</b>\n"
+                f"• /deals - View 5 latest tracked listings\n"
+                f"• /contacted - View deals you've marked as contacted\n"
+                f"• /stats - View pipeline database counts\n"
+                f"• /help - Show this help menu"
             )
             requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={
-                "chat_id": chat_id,
-                "text": help_text,
-                "parse_mode": "HTML"
+                "chat_id": chat_id, "text": help_text, "parse_mode": "HTML"
             })
 
     return {"status": "ok"}
