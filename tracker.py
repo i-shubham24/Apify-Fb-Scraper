@@ -33,9 +33,12 @@ def send_telegram_alert(text: str, listing_id: str, listing_url: str, image_url:
             "parse_mode": "HTML",
             "reply_markup": keyboard
         }
-        res = requests.post(url, json=payload)
-        if res.status_code == 200:
-            success = True
+        try:
+            res = requests.post(url, json=payload, timeout=10)
+            if res.status_code == 200:
+                success = True
+        except Exception:
+            success = False
 
     if not success:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -45,7 +48,7 @@ def send_telegram_alert(text: str, listing_id: str, listing_url: str, image_url:
             "parse_mode": "HTML",
             "reply_markup": keyboard
         }
-        requests.post(url, json=payload)
+        requests.post(url, json=payload, timeout=10)
 
 def process_scraped_data(items: list):
     print(f"Processing {len(items)} items in the background...")
