@@ -11,6 +11,26 @@ APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
 
 app = FastAPI()
 
+@app.on_event("startup")
+async def set_bot_commands():
+    commands = [
+        {"command": "deals", "description": "View 5 latest tracked listings"},
+        {"command": "watchlist", "description": "View active uncontacted items"},
+        {"command": "apple", "description": "View latest iPhone listings"},
+        {"command": "samsung", "description": "View latest Samsung listings"},
+        {"command": "pixel", "description": "View latest Google Pixel listings"},
+        {"command": "contacted", "description": "View deals marked as contacted"},
+        {"command": "purchased", "description": "View successfully purchased deals"},
+        {"command": "stats", "description": "View pipeline database statistics"},
+        {"command": "help", "description": "Show help menu"}
+    ]
+    url = f"https://api.telegram.org/bot{TOKEN}/setMyCommands"
+    try:
+        requests.post(url, json={"commands": commands})
+        print("Telegram bot commands registered successfully!")
+    except Exception as e:
+        print(f"Failed to register bot commands: {e}")
+
 @app.get("/")
 async def health_check():
     return {"status": "Canadian Marketplace Bot is active!"}
@@ -62,14 +82,13 @@ async def telegram_webhook(request: Request):
                     item = res.data[0]
                     offer_text = f"Hi! Is this {item['title']} still available? Can you do ${float(item['price'])-20:,.0f} CAD cash pickup today?"
                 else:
-                    offer_text = f"Hi! Is this still available? Can you do cash pickup today?"
+                    offer_text = "Hi! Is this still available? Can you do cash pickup today?"
 
                 requests.post(f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery", json={
                     "callback_query_id": callback_id, 
                     "text": "Offer generated as a reply below!"
                 })
                 
-                # Send as a direct reply to the deal message ID
                 requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={
                     "chat_id": chat_id,
                     "reply_to_message_id": message_id,
@@ -103,18 +122,20 @@ async def telegram_webhook(request: Request):
     elif "message" in data:
         message = data["message"]
         chat_id = message.get("chat", {}).get("id")
-        text = message.get("text", "").strip()
+        text = message.get("text", "").strip().lower()
 
         if text.startswith("/stats"):
             try:
                 total = supabase.table("listings").select("id", count="exact").execute().count or 0
+                new_count = supabase.table("listings").select("id", count="exact").eq("status", "NEW").execute().count or 0
                 contacted = supabase.table("listings").select("id", count="exact").eq("status", "CONTACTED").execute().count or 0
                 purchased = supabase.table("listings").select("id", count="exact").eq("status", "PURCHASED").execute().count or 0
 
                 reply = (
                     f"📊 <b>Market Bot Statistics</b>\n\n"
                     f"📱 Total Tracked: {total}\n"
-                    f"💬 Contacted: {contacted}\n"
+                    f"🔥 Active Watchlist: {new_count}\n"
+                    f"💬 Contacted Sellers: {contacted}\n"
                     f"✅ Purchased: {purchased}"
                 )
             except Exception as e:
@@ -140,6 +161,70 @@ async def telegram_webhook(request: Request):
                 "chat_id": chat_id, "text": reply, "parse_mode": "HTML", "disable_web_page_preview": True
             })
 
+        elif text.startswith("/apple"):
+            try:
+                res = supabase.table("listings").select("title, price, url").ilike("title", "%iphone%").order("id", desc=True).limit(5).execute()
+                if res.data:
+                    reply = "🍎 <b>Latest Apple iPhone Deals:</b>\n\n"
+                    for item in res.data:
+                        reply += f"• <a href='{item['url']}'>{item['title']}</a> - <b>${float(item['price']):,.2f} CAD</b>\n"
+                else:
+                    reply = "No iPhone listings found in database."
+            except Exception as e:
+                reply = f"Error fetching Apple deals: {e}"
+
+            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={
+                "chat_id": chat_id, "text": reply, "parse_mode": "HTML", "disable_web_page_preview": True
+            })
+
+        elif text.startswith("/samsung"):
+            try:
+                res = supabase.table("listings").select("title, price, url").ilike("title", "%samsung%").order("id", desc=True).limit(5).execute()
+                if res.data:
+                    reply = "📱 <b>Latest Samsung Galaxy Deals:</b>\n\n"
+                    for item in res.data:
+                        reply += f"• <a href='{item['url']}'>{item['title']}</a> - <b>${float(item['price']):,.2f} CAD</b>\n"
+                else:
+                    reply = "No Samsung listings found in database."
+            except Exception as e:
+                reply = f"Error fetching Samsung deals: {e}"
+
+            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={
+                "chat_id": chat_id, "text": reply, "parse_mode": "HTML", "disable_web_page_preview": True
+            })
+
+        elif text.startswith("/pixel"):
+            try:
+                res = supabase.table("listings").select("title, price, url").ilike("title", "%pixel%").order("id", desc=True).limit(5).execute()
+                if res.data:
+                    reply = "📸 <b>Latest Google Pixel Deals:</b>\n\n"
+                    for item in res.data:
+                        reply += f"• <a href='{item['url']}'>{item['title']}</a> - <b>${float(item['price']):,.2f} CAD</b>\n"
+                else:
+                    reply = "No Google Pixel listings found in database."
+            except Exception as e:
+                reply = f"Error fetching Pixel deals: {e}"
+
+            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={
+                "chat_id": chat_id, "text": reply, "parse_mode": "HTML", "disable_web_page_preview": True
+            })
+
+        elif text.startswith("/watchlist"):
+            try:
+                res = supabase.table("listings").select("title, price, url").eq("status", "NEW").order("id", desc=True).limit(5).execute()
+                if res.data:
+                    reply = "📌 <b>Active Watchlist (Uncontacted):</b>\n\n"
+                    for item in res.data:
+                        reply += f"• <a href='{item['url']}'>{item['title']}</a> - <b>${float(item['price']):,.2f} CAD</b>\n"
+                else:
+                    reply = "No active listings currently in your watchlist."
+            except Exception as e:
+                reply = f"Error fetching watchlist: {e}"
+
+            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={
+                "chat_id": chat_id, "text": reply, "parse_mode": "HTML", "disable_web_page_preview": True
+            })
+
         elif text.startswith("/contacted"):
             try:
                 res = supabase.table("listings").select("title, price, url").eq("status", "CONTACTED").limit(5).execute()
@@ -156,14 +241,35 @@ async def telegram_webhook(request: Request):
                 "chat_id": chat_id, "text": reply, "parse_mode": "HTML", "disable_web_page_preview": True
             })
 
+        elif text.startswith("/purchased"):
+            try:
+                res = supabase.table("listings").select("title, price, url").eq("status", "PURCHASED").limit(5).execute()
+                if res.data:
+                    reply = "✅ <b>Successfully Purchased Deals:</b>\n\n"
+                    for item in res.data:
+                        reply += f"• <a href='{item['url']}'>{item['title']}</a> - <b>${float(item['price']):,.2f} CAD</b>\n"
+                else:
+                    reply = "No purchased deals recorded yet."
+            except Exception as e:
+                reply = f"Error fetching purchased items: {e}"
+
+            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={
+                "chat_id": chat_id, "text": reply, "parse_mode": "HTML", "disable_web_page_preview": True
+            })
+
         elif text.startswith("/help") or text.startswith("/start"):
             help_text = (
                 f"🤖 <b>Canadian Marketplace Deal Bot</b>\n\n"
-                f"<b>Commands:</b>\n"
-                f"• /deals - View 5 latest tracked listings\n"
-                f"• /contacted - View deals you've marked as contacted\n"
-                f"• /stats - View pipeline database counts\n"
-                f"• /help - Show this help menu"
+                f"<b>Commands Menu:</b>\n"
+                f"• /deals - View latest tracked listings\n"
+                f"• /apple - Filter latest iPhone deals\n"
+                f"• /samsung - Filter latest Samsung deals\n"
+                f"• /pixel - Filter latest Pixel deals\n"
+                f"• /watchlist - View active uncontacted items\n"
+                f"• /contacted - View contacted listings\n"
+                f"• /purchased - View bought devices\n"
+                f"• /stats - View database counts\n"
+                f"• /help - Show this menu"
             )
             requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", json={
                 "chat_id": chat_id, "text": help_text, "parse_mode": "HTML"
