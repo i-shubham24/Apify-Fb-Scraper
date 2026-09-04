@@ -45,6 +45,7 @@ def process_scraped_data(items: list):
             if not raw_price or not listing_id:
                 continue
 
+            # Parse and clean the price string
             if isinstance(raw_price, str):
                 cleaned_price = re.sub(r'[^\d.]', '', raw_price)
                 price = float(cleaned_price) if cleaned_price else 0.0
@@ -56,11 +57,12 @@ def process_scraped_data(items: list):
             if price == 0.0:
                 continue
 
+            # Check if listing already exists in database
             response = supabase.table("listings").select("price, status").eq("id", listing_id).execute()
             
             if len(response.data) == 0:
                 print(f"Sending to Gemini for analysis: {title}")
-                time.sleep(4.5) 
+                time.sleep(4.5) # Respect Gemini API 15 RPM free tier limit
                 
                 # Protect against Gemini API 503 Crashes
                 analysis = {}
@@ -70,16 +72,32 @@ def process_scraped_data(items: list):
                 except Exception as e:
                     print(f"Gemini API Error for '{title}': {e}")
                     analysis = {
-                        "is_scam": False, 
+                        "is_scam": False,
+                        "is_broken": False,
+                        "is_target_brand": True, # Default to True so it isn't skipped on API failure
                         "battery_health": "N/A", 
                         "storage": "N/A", 
                         "condition_notes": "Gemini API unavailable. Manual review needed."
                     }
                 
-                if analysis.get("is_scam"):
-                    print(f"Filtered out potential scam: {title}")
+                # Apply the strict filtering rules
+                is_scam = analysis.get("is_scam", False)
+                is_broken = analysis.get("is_broken", False)
+                is_target_brand = analysis.get("is_target_brand", True)
+
+                if is_scam:
+                    print(f"🚫 Rejected (Scam/Copy): {title}")
                     continue
                 
+                if is_broken:
+                    print(f"🔧 Rejected (Broken/Defective): {title}")
+                    continue
+                    
+                if not is_target_brand:
+                    print(f"📱 Rejected (Wrong Brand): {title}")
+                    continue
+                
+                # Insert the approved listing into Supabase
                 supabase.table("listings").insert({
                     "id": listing_id,
                     "title": title,
@@ -101,6 +119,7 @@ def process_scraped_data(items: list):
                 send_telegram_alert(alert, listing_id, listing_url)
 
             else:
+                # Listing exists, check for a price drop
                 existing_data = response.data[0]
                 old_price = float(existing_data["price"])
                 current_status = existing_data["status"]
@@ -124,7 +143,7 @@ def process_scraped_data(items: list):
                     )
                     send_telegram_alert(alert, listing_id, listing_url)
 
-        # This prevents a single bad phone from breaking the rest of the queue
         except Exception as e:
+            # Prevents a single bad phone data structure from breaking the loop
             print(f"Critical error processing listing '{item.get('title', 'Unknown')}': {e}")
             continue
